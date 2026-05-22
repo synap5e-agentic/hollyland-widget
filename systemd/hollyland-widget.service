@@ -5,7 +5,9 @@ After=network.target
 [Service]
 Type=simple
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/agentic/hollyland-widget/service/hollyland-widget-service
+Environment=HOLLYLAND_WIDGET_PROJECT_PARENT=%h/agentic
+Environment=HOLLYLAND_WIDGET_PROJECT_NAME=hollyland-widget
+ExecStart=/usr/bin/env bash -lc 'exec "$HOLLYLAND_WIDGET_PROJECT_PARENT/$HOLLYLAND_WIDGET_PROJECT_NAME/service/hollyland-widget-service"'
 Restart=on-failure
 
 [Install]

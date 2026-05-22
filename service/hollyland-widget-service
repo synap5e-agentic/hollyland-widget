@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -15,15 +13,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from hollyland_api import HollylandClient
 from hollyland_widget_power import HistoryStore
 from hollyland_widget_power import current_epoch_ms
 from hollyland_widget_power import enrich_state_with_power
 
 
-DEFAULT_PROJECT_ROOT = Path.home() / "agentic" / "hollyland"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "hollyland-widget"
 DEFAULT_CACHE_PATH = DEFAULT_CACHE_DIR / "state.json"
 DEFAULT_HISTORY_PATH = DEFAULT_CACHE_DIR / "history.jsonl"
+API_MODULE_PATH = Path(__file__).with_name("hollyland_api.py")
 TX_CHOICES = {"tx1", "tx2", "tx3", "tx4"}
 VOICE_MODE_CHOICES = {"mono", "stereo"}
 SIGNAL_MODE_CHOICES = {"normal", "enhance"}
@@ -40,19 +39,8 @@ class HollylandCommandError(RuntimeError):
 class ServiceConfig:
     host: str
     port: int
-    project_root: Path
     cache_path: Path
     history_path: Path
-
-
-def default_project_root() -> Path:
-    project_root = os.environ.get("HOLLYLAND_PROJECT_ROOT")
-    if project_root:
-        return Path(project_root).expanduser()
-    cli_path = os.environ.get("HOLLYLAND_CLI_PATH")
-    if cli_path:
-        return Path(cli_path).expanduser().parent
-    return DEFAULT_PROJECT_ROOT
 
 
 def utc_now_iso(epoch_ms: int | None = None) -> str:
@@ -66,11 +54,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=os.environ.get("HOLLYLAND_WIDGET_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("HOLLYLAND_WIDGET_PORT", "8791")))
     parser.add_argument(
-        "--project-root",
-        default=str(default_project_root()),
-        help="Path to the Hollyland project root",
-    )
-    parser.add_argument(
         "--cache-path",
         default=os.environ.get("HOLLYLAND_WIDGET_CACHE_PATH", str(DEFAULT_CACHE_PATH)),
         help="Path to the compatibility cache JSON file",
@@ -81,16 +64,6 @@ def parse_args() -> argparse.Namespace:
         help="Path to the persisted live battery history JSONL file",
     )
     return parser.parse_args()
-
-
-def load_hollyland_api(project_root: Path) -> Any:
-    if not project_root.exists():
-        raise HollylandCommandError(f"Hollyland project root does not exist: {project_root}")
-    sys.path.insert(0, str(project_root))
-    try:
-        return importlib.import_module("hollyland_api")
-    except Exception as exc:
-        raise HollylandCommandError(f"Failed to import hollyland_api from {project_root}: {exc}") from exc
 
 
 def transmitter_rows(heart: dict[str, Any]) -> list[dict[str, Any]]:
@@ -180,7 +153,7 @@ def build_contract(
             "kind": "hollyland-api",
             "label": "Hollyland API",
             "transport": summary.get("transport") or "usb_control",
-            "project_root": str(config.project_root),
+            "api_module": str(API_MODULE_PATH),
             "cache_path": str(config.cache_path),
         },
         "summary": summary,
@@ -192,13 +165,13 @@ def build_contract(
 class HollylandBackend:
     def __init__(self, config: ServiceConfig) -> None:
         self.config = config
-        self.api = load_hollyland_api(config.project_root)
+        self.client = HollylandClient()
         self.history_store = HistoryStore(config.history_path)
 
     def read_current(self) -> dict[str, Any]:
         try:
             now_ms = current_epoch_ms()
-            summary = self._run_api_command(["summary"])
+            summary = self._read_summary()
             transmitters = transmitter_rows(summary.get("heart_info") or {})
             if summary.get("probe_ok"):
                 history_records = self.history_store.append_live_snapshot(summary, transmitters, now_ms=now_ms)
@@ -236,7 +209,7 @@ class HollylandBackend:
                 "current": self.read_current(),
             }
 
-        result = self._run_api_command(self._build_action_args(action, request))
+        result = self._run_action_method(action, request)
         current = self.read_current()
         return {
             "ok": True,
@@ -245,16 +218,28 @@ class HollylandBackend:
             "current": current,
         }
 
-    def _build_action_args(self, action: str, request: dict[str, Any]) -> list[str]:
+    def _run_action_method(self, action: str, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = self._dispatch_action(action, request)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise HollylandCommandError(str(exc)) from exc
+        return result.model_dump()
+
+    def _dispatch_action(self, action: str, request: dict[str, Any]):
         if action in {"set-noise", "set-performance", "set-light", "set-tx-identify"}:
             on = request.get("on")
             if not isinstance(on, bool):
                 raise ValueError(f"`on` must be true or false for `{action}`")
-            args = [action, "--on" if on else "--off"]
             if action == "set-noise":
                 level = int(request.get("level", 2))
-                args.extend(["--level", str(level)])
-            return args
+                return self.client.set_noise(on, level)
+            if action == "set-performance":
+                return self.client.set_performance(on)
+            if action == "set-light":
+                return self.client.set_light(on)
+            return self.client.set_tx_identify(on)
 
         if action == "set-tx-mute":
             tx = request.get("tx")
@@ -263,31 +248,31 @@ class HollylandBackend:
                 raise ValueError("`tx` must be one of: tx1, tx2, tx3, tx4")
             if not isinstance(on, bool):
                 raise ValueError("`on` must be true or false for `set-tx-mute`")
-            return [action, "--tx", str(tx), "--on" if on else "--off"]
+            return self.client.set_tx_mute(tx, on)
 
         if action == "set-voice-mode":
             mode = request.get("mode")
             if mode not in VOICE_MODE_CHOICES:
                 raise ValueError("`mode` must be one of: mono, stereo")
-            return [action, "--mode", str(mode)]
+            return self.client.set_voice_mode(mode)
 
         if action == "set-signal-mode":
             mode = request.get("mode")
             if mode not in SIGNAL_MODE_CHOICES:
                 raise ValueError("`mode` must be one of: normal, enhance")
-            return [action, "--mode", str(mode)]
+            return self.client.set_signal_mode(mode)
 
         if action == "set-eq":
             preset = request.get("preset")
             if preset not in EQ_CHOICES:
                 raise ValueError("`preset` must be one of: overcast, bright, balance")
-            return [action, "--preset", str(preset)]
+            return self.client.set_eq(preset)
 
         if action == "set-shutdown-time":
             mode = request.get("mode")
             if mode not in SHUTDOWN_CHOICES:
                 raise ValueError("`mode` must be one of: quarter, never")
-            return [action, "--mode", str(mode)]
+            return self.client.set_shutdown_time(mode)
 
         if action == "set-voice-level":
             value = request.get("value")
@@ -295,20 +280,15 @@ class HollylandBackend:
                 raise ValueError("`value` must be an integer for `set-voice-level`")
             if value not in VOICE_LEVEL_RANGE:
                 raise ValueError("`value` must be between 0 and 5 for `set-voice-level`")
-            return [action, "--value", str(value)]
+            return self.client.set_voice_level(value)
 
         raise ValueError(f"Unsupported action: {action}")
 
-    def _run_api_command(self, argv: list[str]) -> dict[str, Any]:
-        if argv == ["summary"] and _env_flag_enabled("HOLLYLAND_WIDGET_FORCE_COMMAND_ERROR"):
+    def _read_summary(self) -> dict[str, Any]:
+        if _env_flag_enabled("HOLLYLAND_WIDGET_FORCE_COMMAND_ERROR"):
             raise HollylandCommandError("forced Hollyland command error")
         try:
-            args = self.api.parse_cli_args(argv)
-            return self.api.run_json_command(args)
-        except OSError as exc:
-            raise HollylandCommandError(str(exc)) from exc
-        except SystemExit as exc:
-            raise HollylandCommandError(f"Invalid Hollyland command arguments: {argv}") from exc
+            return self.client.summary().model_dump()
         except Exception as exc:
             raise HollylandCommandError(str(exc)) from exc
 
@@ -423,7 +403,6 @@ def main() -> int:
     config = ServiceConfig(
         host=args.host,
         port=args.port,
-        project_root=Path(args.project_root).expanduser(),
         cache_path=Path(args.cache_path).expanduser(),
         history_path=Path(args.history_path).expanduser(),
     )
@@ -432,7 +411,7 @@ def main() -> int:
     server = ReusableHTTPServer((config.host, config.port), HollylandRequestHandler)
     print(
         "hollyland-widget-service listening on "
-        f"http://{config.host}:{config.port} using {config.project_root}"
+        f"http://{config.host}:{config.port} using {API_MODULE_PATH}"
     )
     server.serve_forever()
     return 0
