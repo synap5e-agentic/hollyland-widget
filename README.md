@@ -1,14 +1,17 @@
 # Hollyland Noctalia Widget
 
-Local Noctalia bar widget and panel for the Hollyland wireless receiver.
+A [Noctalia](https://github.com/noctalia) plugin that puts your Hollyland wireless receiver in the
+status bar. A compact bar widget shows live transmitter state at a glance; clicking it opens a full
+panel with receiver details, per-transmitter status, and controls for the most common audio settings.
 
 ![Hollyland bar widget](docs/screenshots/hollyland-bar.png)
 
 ![Hollyland panel](docs/screenshots/hollyland-panel.png)
 
-The plugin talks to a tiny local HTTP service in `service/hollyland-widget-service`. That service
-uses the in-tree Hollyland API directly. HTTP is still the simpler boundary for the QML side because
-the widget is request/poll oriented rather than stream oriented.
+The plugin works by polling a small local HTTP service (`service/hollyland-widget-service`) that
+speaks directly to the Hollyland API over USB. To use the plugin you run that service once (or keep
+it running as a user systemd unit), install the plugin into Noctalia, and the bar widget appears
+automatically when a receiver is detected.
 
 ## What It Shows
 
@@ -18,19 +21,6 @@ the widget is request/poll oriented rather than stream oriented.
 - current audio settings from `summary`
 - common write actions: noise, performance, light, identify, TX mute, voice mode, signal mode,
   EQ, shutdown time, and voice level
-
-## Layout
-
-| Path | Purpose |
-|---|---|
-| `plugin/manifest.json` | Noctalia plugin metadata and entry points |
-| `plugin/Main.qml` | Shared plugin state, HTTP polling, action dispatch |
-| `plugin/BarWidget.qml` | Compact bar surface |
-| `plugin/Panel.qml` | Expanded controls and live state |
-| `service/hollyland-widget-service` | Local HTTP wrapper around the Hollyland Python API |
-| `systemd/hollyland-widget.service` | Optional user service unit |
-| `scripts/check_all.sh` | Canonical local verification gate |
-| `install.sh` | Symlink the plugin tree into Noctalia and register it |
 
 ## Run The Service
 
