@@ -1,0 +1,26 @@
+{
+  "id": "hollyland",
+  "name": "Hollyland",
+  "version": "0.1.0",
+  "minNoctaliaVersion": "3.6.0",
+  "author": "Simon",
+  "license": "MIT",
+  "description": "Bar widget and panel for the Hollyland wireless receiver",
+  "tags": [
+    "Bar",
+    "Panel",
+    "Utility",
+    "Audio"
+  ],
+  "entryPoints": {
+    "main": "Main.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml"
+  },
+  "dependencies": {
+    "plugins": []
+  },
+  "metadata": {
+    "defaultSettings": {}
+  }
+}

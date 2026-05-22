@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""Serve a QML-friendly HTTP wrapper around the Hollyland Python API."""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import os
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from hollyland_widget_power import HistoryStore
+from hollyland_widget_power import current_epoch_ms
+from hollyland_widget_power import enrich_state_with_power
+
+
+DEFAULT_PROJECT_ROOT = Path.home() / "agentic" / "hollyland"
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "hollyland-widget"
+DEFAULT_CACHE_PATH = DEFAULT_CACHE_DIR / "state.json"
+DEFAULT_HISTORY_PATH = DEFAULT_CACHE_DIR / "history.jsonl"
+TX_CHOICES = {"tx1", "tx2", "tx3", "tx4"}
+VOICE_MODE_CHOICES = {"mono", "stereo"}
+SIGNAL_MODE_CHOICES = {"normal", "enhance"}
+EQ_CHOICES = {"overcast", "bright", "balance"}
+SHUTDOWN_CHOICES = {"quarter", "never"}
+VOICE_LEVEL_RANGE = range(0, 6)
+
+
+class HollylandCommandError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ServiceConfig:
+    host: str
+    port: int
+    project_root: Path
+    cache_path: Path
+    history_path: Path
+
+
+def default_project_root() -> Path:
+    project_root = os.environ.get("HOLLYLAND_PROJECT_ROOT")
+    if project_root:
+        return Path(project_root).expanduser()
+    cli_path = os.environ.get("HOLLYLAND_CLI_PATH")
+    if cli_path:
+        return Path(cli_path).expanduser().parent
+    return DEFAULT_PROJECT_ROOT
+
+
+def utc_now_iso(epoch_ms: int | None = None) -> str:
+    if epoch_ms is None:
+        return datetime.now(timezone.utc).isoformat()
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default=os.environ.get("HOLLYLAND_WIDGET_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("HOLLYLAND_WIDGET_PORT", "8791")))
+    parser.add_argument(
+        "--project-root",
+        default=str(default_project_root()),
+        help="Path to the Hollyland project root",
+    )
+    parser.add_argument(
+        "--cache-path",
+        default=os.environ.get("HOLLYLAND_WIDGET_CACHE_PATH", str(DEFAULT_CACHE_PATH)),
+        help="Path to the compatibility cache JSON file",
+    )
+    parser.add_argument(
+        "--history-path",
+        default=os.environ.get("HOLLYLAND_WIDGET_HISTORY_PATH", str(DEFAULT_HISTORY_PATH)),
+        help="Path to the persisted live battery history JSONL file",
+    )
+    return parser.parse_args()
+
+
+def load_hollyland_api(project_root: Path) -> Any:
+    if not project_root.exists():
+        raise HollylandCommandError(f"Hollyland project root does not exist: {project_root}")
+    sys.path.insert(0, str(project_root))
+    try:
+        return importlib.import_module("hollyland_api")
+    except Exception as exc:
+        raise HollylandCommandError(f"Failed to import hollyland_api from {project_root}: {exc}") from exc
+
+
+def transmitter_rows(heart: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index in range(1, 5):
+        prefix = f"tx{index}"
+        status = heart.get(f"{prefix}_status")
+        battery = heart.get(f"{prefix}_battery")
+        mute = heart.get(f"{prefix}_mute")
+        if status is None and battery is None and mute is None:
+            continue
+        rows.append(
+            {
+                "id": prefix,
+                "label": f"TX {index}",
+                "online": status,
+                "battery": battery,
+                "mute": mute,
+            }
+        )
+    return rows
+
+
+def summarize_payload(summary: dict[str, Any]) -> dict[str, Any]:
+    heart = summary.get("heart_info") or {}
+    transmitters = transmitter_rows(heart)
+    primary_tx = next((item for item in transmitters if item.get("online") is True), None)
+    if primary_tx is None and transmitters:
+        primary_tx = transmitters[0]
+
+    performance_mode = summary.get("performance_mode")
+    performance_enabled = None if performance_mode is None else bool(performance_mode)
+    usb_devices = summary.get("usb") or []
+    usb_device = usb_devices[0]["usb_dev"] if usb_devices else ""
+    probe_ok = bool(summary.get("probe_ok"))
+    device_present = bool(usb_devices)
+
+    return {
+        "connected": device_present and probe_ok,
+        "device_present": device_present,
+        "probe_ok": probe_ok,
+        "permissions_ok": summary.get("permissions_ok"),
+        "probe_error": summary.get("probe_error"),
+        "transport": summary.get("transport") or "usb_control",
+        "online_count": sum(1 for item in transmitters if item.get("online") is True),
+        "primary_tx": primary_tx,
+        "transmitters": transmitters,
+        "rx": {
+            "sn": summary.get("rx_sn"),
+            "version": summary.get("rx_version"),
+            "mac": summary.get("rx_mac"),
+            "usb_dev": usb_device,
+            "performance_enabled": performance_enabled,
+        },
+        "audio": {
+            "noise_enabled": heart.get("noise_enabled"),
+            "noise_level": heart.get("noise_level"),
+            "voice_level": heart.get("voice_level"),
+            "voice_mode": heart.get("voice_mode"),
+            "voice_mode_name": heart.get("voice_mode_name"),
+            "signal_mode": heart.get("signal_mode"),
+            "signal_mode_name": heart.get("signal_mode_name"),
+            "eq_level": heart.get("eq_level"),
+            "eq_level_name": heart.get("eq_level_name"),
+            "shutdown_time": heart.get("shutdown_time"),
+            "shutdown_time_name": heart.get("shutdown_time_name"),
+            "light_enabled": heart.get("light_enabled"),
+            "tx_identify_enabled": heart.get("tx_identify_enabled"),
+            "reverb_enabled": heart.get("reverb_enabled"),
+            "reverb_level": heart.get("reverb_level"),
+        },
+    }
+
+
+def build_contract(
+    summary: dict[str, Any],
+    config: ServiceConfig,
+    *,
+    history_records: list[dict[str, Any]],
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    state = summarize_payload(summary)
+    state = enrich_state_with_power(state, history_records, now_ms=now_ms)
+    return {
+        "ok": True,
+        "backend": {
+            "kind": "hollyland-api",
+            "label": "Hollyland API",
+            "transport": summary.get("transport") or "usb_control",
+            "project_root": str(config.project_root),
+            "cache_path": str(config.cache_path),
+        },
+        "summary": summary,
+        "state": state,
+        "updated_at": utc_now_iso(epoch_ms=now_ms),
+    }
+
+
+class HollylandBackend:
+    def __init__(self, config: ServiceConfig) -> None:
+        self.config = config
+        self.api = load_hollyland_api(config.project_root)
+        self.history_store = HistoryStore(config.history_path)
+
+    def read_current(self) -> dict[str, Any]:
+        try:
+            now_ms = current_epoch_ms()
+            summary = self._run_api_command(["summary"])
+            transmitters = transmitter_rows(summary.get("heart_info") or {})
+            if summary.get("probe_ok"):
+                history_records = self.history_store.append_live_snapshot(summary, transmitters, now_ms=now_ms)
+            else:
+                history_records = self.history_store.load_records(now_ms=now_ms)
+            payload = build_contract(summary, self.config, history_records=history_records, now_ms=now_ms)
+            self._write_cache(payload)
+            return payload
+        except HollylandCommandError as exc:
+            cached = self._load_cache()
+            if cached is None:
+                raise
+            now_ms = current_epoch_ms()
+            cached = self._enrich_cached_payload(cached, now_ms=now_ms)
+            state = dict(cached.get("state") or {})
+            state["service_error"] = str(exc)
+            state["stale"] = True
+            cached["state"] = state
+            backend = dict(cached.get("backend") or {})
+            backend["stale"] = True
+            cached["backend"] = backend
+            cached["ok"] = False
+            cached["error"] = str(exc)
+            return cached
+
+    def run_action(self, request: dict[str, Any]) -> dict[str, Any]:
+        action = request.get("action")
+        if not isinstance(action, str) or not action:
+            raise ValueError("`action` must be a non-empty string")
+
+        if action == "refresh":
+            return {
+                "ok": True,
+                "action": action,
+                "current": self.read_current(),
+            }
+
+        result = self._run_api_command(self._build_action_args(action, request))
+        current = self.read_current()
+        return {
+            "ok": True,
+            "action": action,
+            "result": result,
+            "current": current,
+        }
+
+    def _build_action_args(self, action: str, request: dict[str, Any]) -> list[str]:
+        if action in {"set-noise", "set-performance", "set-light", "set-tx-identify"}:
+            on = request.get("on")
+            if not isinstance(on, bool):
+                raise ValueError(f"`on` must be true or false for `{action}`")
+            args = [action, "--on" if on else "--off"]
+            if action == "set-noise":
+                level = int(request.get("level", 2))
+                args.extend(["--level", str(level)])
+            return args
+
+        if action == "set-tx-mute":
+            tx = request.get("tx")
+            on = request.get("on")
+            if tx not in TX_CHOICES:
+                raise ValueError("`tx` must be one of: tx1, tx2, tx3, tx4")
+            if not isinstance(on, bool):
+                raise ValueError("`on` must be true or false for `set-tx-mute`")
+            return [action, "--tx", str(tx), "--on" if on else "--off"]
+
+        if action == "set-voice-mode":
+            mode = request.get("mode")
+            if mode not in VOICE_MODE_CHOICES:
+                raise ValueError("`mode` must be one of: mono, stereo")
+            return [action, "--mode", str(mode)]
+
+        if action == "set-signal-mode":
+            mode = request.get("mode")
+            if mode not in SIGNAL_MODE_CHOICES:
+                raise ValueError("`mode` must be one of: normal, enhance")
+            return [action, "--mode", str(mode)]
+
+        if action == "set-eq":
+            preset = request.get("preset")
+            if preset not in EQ_CHOICES:
+                raise ValueError("`preset` must be one of: overcast, bright, balance")
+            return [action, "--preset", str(preset)]
+
+        if action == "set-shutdown-time":
+            mode = request.get("mode")
+            if mode not in SHUTDOWN_CHOICES:
+                raise ValueError("`mode` must be one of: quarter, never")
+            return [action, "--mode", str(mode)]
+
+        if action == "set-voice-level":
+            value = request.get("value")
+            if not isinstance(value, int):
+                raise ValueError("`value` must be an integer for `set-voice-level`")
+            if value not in VOICE_LEVEL_RANGE:
+                raise ValueError("`value` must be between 0 and 5 for `set-voice-level`")
+            return [action, "--value", str(value)]
+
+        raise ValueError(f"Unsupported action: {action}")
+
+    def _run_api_command(self, argv: list[str]) -> dict[str, Any]:
+        if argv == ["summary"] and _env_flag_enabled("HOLLYLAND_WIDGET_FORCE_COMMAND_ERROR"):
+            raise HollylandCommandError("forced Hollyland command error")
+        try:
+            args = self.api.parse_cli_args(argv)
+            return self.api.run_json_command(args)
+        except OSError as exc:
+            raise HollylandCommandError(str(exc)) from exc
+        except SystemExit as exc:
+            raise HollylandCommandError(f"Invalid Hollyland command arguments: {argv}") from exc
+        except Exception as exc:
+            raise HollylandCommandError(str(exc)) from exc
+
+    def _load_cache(self) -> dict[str, Any] | None:
+        try:
+            return json.loads(self.config.cache_path.read_text(encoding="utf-8"))
+        except OSError:
+            return None
+        except json.JSONDecodeError:
+            return None
+
+    def _write_cache(self, payload: dict[str, Any]) -> None:
+        self.config.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.config.cache_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        temp_path.replace(self.config.cache_path)
+
+    def _enrich_cached_payload(self, payload: dict[str, Any], *, now_ms: int) -> dict[str, Any]:
+        state = payload.get("state")
+        if not isinstance(state, dict):
+            return payload
+
+        history_records = self.history_store.load_records(now_ms=now_ms)
+        enriched = dict(payload)
+        enriched["state"] = enrich_state_with_power(state, history_records, now_ms=now_ms)
+        return enriched
+
+
+def _env_flag_enabled(name: str) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+class HollylandRequestHandler(BaseHTTPRequestHandler):
+    backend: HollylandBackend
+
+    def _send_json(self, payload: dict[str, Any], status_code: int = 200) -> None:
+        body = json.dumps(payload, ensure_ascii=False)
+        body_bytes = body.encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def _write_error(self, status_code: int, message: str, **extra: Any) -> None:
+        payload: dict[str, Any] = {"ok": False, "error": message}
+        if extra:
+            payload.update(extra)
+        self._send_json(payload, status_code)
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON request body: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("request body must be a JSON object")
+        return data
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path in {"/health", "/healthz"}:
+            self._send_json({"ok": True, "service": "hollyland-widget-service"})
+            return
+
+        if parsed.path == "/api/current":
+            try:
+                payload = self.backend.read_current()
+            except HollylandCommandError as exc:
+                self._write_error(503, str(exc))
+                return
+            self._send_json(payload)
+            return
+
+        self._write_error(404, "not found")
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/action":
+            self._write_error(404, "not found")
+            return
+
+        try:
+            request = self._read_json_body()
+            payload = self.backend.run_action(request)
+        except ValueError as exc:
+            self._write_error(400, str(exc))
+            return
+        except HollylandCommandError as exc:
+            self._write_error(503, str(exc))
+            return
+
+        self._send_json(payload)
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        return
+
+
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
+def main() -> int:
+    args = parse_args()
+    config = ServiceConfig(
+        host=args.host,
+        port=args.port,
+        project_root=Path(args.project_root).expanduser(),
+        cache_path=Path(args.cache_path).expanduser(),
+        history_path=Path(args.history_path).expanduser(),
+    )
+    HollylandRequestHandler.backend = HollylandBackend(config)
+
+    server = ReusableHTTPServer((config.host, config.port), HollylandRequestHandler)
+    print(
+        "hollyland-widget-service listening on "
+        f"http://{config.host}:{config.port} using {config.project_root}"
+    )
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

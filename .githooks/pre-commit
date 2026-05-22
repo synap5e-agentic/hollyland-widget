@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$HOOK_DIR/.." && pwd)"
+
+exec "$ROOT_DIR/scripts/check_all.sh"
