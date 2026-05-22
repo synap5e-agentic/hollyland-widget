@@ -96,6 +96,18 @@ Item {
     return items.filter(function(tx) { return tx && tx.online === true; });
   }
 
+  function barAlertLevel() {
+    const online = onlineTransmitters();
+    let sawWarning = false;
+    for (let i = 0; i < online.length; ++i) {
+      if (online[i].alert_level === "critical")
+        return "critical";
+      if (online[i].alert_level === "warning")
+        sawWarning = true;
+    }
+    return sawWarning ? "warning" : "none";
+  }
+
   function shortTxLabel(tx) {
     if (!tx || !tx.id) return "TX";
     return String(tx.id).toUpperCase();

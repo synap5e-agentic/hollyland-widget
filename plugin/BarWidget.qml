@@ -32,6 +32,7 @@ Item {
     secondaryText: root.mainInstance ? root.mainInstance.barSecondaryText() : ""
     accent: root.mainInstance ? root.mainInstance.statusColor() : Color.mOnSurfaceVariant
     txItems: root.mainInstance ? root.mainInstance.barTransmitterItems() : []
+    alertLevel: root.mainInstance ? root.mainInstance.barAlertLevel() : "none"
     isVertical: root.isVertical
     capsuleHeight: root.capsuleHeight
     barFontSize: root.barFontSize

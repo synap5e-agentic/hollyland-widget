@@ -11,10 +11,37 @@ Item {
   property string secondaryText: ""
   property color accent: Color.mOnSurfaceVariant
   property var txItems: []
+  property string alertLevel: "none"
   property bool isVertical: false
   property real capsuleHeight: Style.baseWidgetSize
   property real barFontSize: Style.fontSizeS
   readonly property real dotSize: Math.max(8, Style.toOdd(capsuleHeight * 0.22))
+
+  function tintColor(base, overlay, amount) {
+    return Qt.rgba(
+      base.r + (overlay.r - base.r) * amount,
+      base.g + (overlay.g - base.g) * amount,
+      base.b + (overlay.b - base.b) * amount,
+      base.a
+    );
+  }
+
+  function capsuleFillColor() {
+    if (alertLevel === "critical")
+      return tintColor(Style.capsuleColor, Color.mError, 0.75);
+    if (alertLevel === "warning")
+      // Commons has no amber token here; a light error tint preserves the existing capsule palette.
+      return tintColor(Style.capsuleColor, Color.mError, 0.30);
+    return Style.capsuleColor;
+  }
+
+  function capsuleStrokeColor() {
+    if (alertLevel === "critical")
+      return Color.mError;
+    if (alertLevel === "warning")
+      return tintColor(Style.capsuleBorderColor, Color.mError, 0.55);
+    return Style.capsuleBorderColor;
+  }
 
   implicitWidth: isVertical ? capsuleHeight : capsule.implicitWidth
   implicitHeight: capsuleHeight
@@ -27,8 +54,8 @@ Item {
     width: implicitWidth
     height: parent.height
     radius: Style.radiusL
-    color: Style.capsuleColor
-    border.color: Style.capsuleBorderColor
+    color: root.capsuleFillColor()
+    border.color: root.capsuleStrokeColor()
     border.width: Style.capsuleBorderWidth
 
     RowLayout {
