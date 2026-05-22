@@ -19,9 +19,8 @@ This requires the local service running on `127.0.0.1:8791` and Qt 6
 environment variable pointing to it.
 
 The plugin talks to a tiny local HTTP service in `service/hollyland-widget-service`. That service
-imports `~/agentic/hollyland/hollyland_api.py` directly and uses the same code path as the CLI,
-rather than spawning `hollyland_cli.py` as a subprocess. HTTP is still the simpler boundary for the
-QML side because the widget is request/poll oriented rather than stream oriented.
+uses the in-tree Hollyland API directly. HTTP is still the simpler boundary for the QML side because
+the widget is request/poll oriented rather than stream oriented.
 
 ## What It Shows
 
@@ -58,7 +57,7 @@ Run it directly:
 Or link/start the user unit:
 
 ```bash
-systemctl --user link ~/agentic/hollyland-widget/systemd/hollyland-widget.service
+systemctl --user link "$PWD/systemd/hollyland-widget.service"
 systemctl --user enable --now hollyland-widget.service
 systemctl --user status hollyland-widget.service
 ```
@@ -66,7 +65,6 @@ systemctl --user status hollyland-widget.service
 Useful overrides:
 
 ```bash
-HOLLYLAND_PROJECT_ROOT=~/agentic/hollyland
 HOLLYLAND_WIDGET_HOST=127.0.0.1
 HOLLYLAND_WIDGET_PORT=8791
 ```
@@ -79,6 +77,7 @@ curl -s http://127.0.0.1:8791/api/current | python3 -m json.tool
 curl -s -X POST http://127.0.0.1:8791/api/action \
   -H 'content-type: application/json' \
   -d '{"action":"refresh"}' | python3 -m json.tool
+python3 service/hollyland_api.py summary
 ```
 
 ## Install The Plugin
