@@ -130,6 +130,28 @@ def _load_payload(service_url: str) -> tuple[dict[str, object], str]:
         return json.load(response), "service"
 
 
+def _redact_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Replace receiver-identifying fields with placeholders for shareable screenshots."""
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        summary["rx_sn"] = "XXXXXXXXXXX"
+        summary["rx_mac"] = "XX:XX:XX:XX:XX:XX"
+        usb_list = summary.get("usb")
+        if isinstance(usb_list, list):
+            for entry in usb_list:
+                if isinstance(entry, dict):
+                    entry["usb_dev"] = "/dev/bus/usb/00X/0XX"
+                    entry["serial"] = "Wireless Microphone"
+    state = payload.get("state")
+    if isinstance(state, dict):
+        rx = state.get("rx")
+        if isinstance(rx, dict):
+            rx["sn"] = "XXXXXXXXXXX"
+            rx["mac"] = "XX:XX:XX:XX:XX:XX"
+            rx["usb_dev"] = "/dev/bus/usb/00X/0XX"
+    return payload
+
+
 def _resolve_output_path(path_text: str) -> Path:
     path = Path(path_text).expanduser()
     if path.is_absolute():
@@ -1019,6 +1041,7 @@ def main() -> int:
     parser.add_argument("--platform", default=os.environ.get("QML_RENDER_PLATFORM", "offscreen"), help="Qt platform plugin for qmltestrunner")
     parser.add_argument("--noctalia-settings-file", default=str(DEFAULT_NOCTALIA_SETTINGS_FILE), help="Noctalia settings.json used for preview sizing/theme")
     parser.add_argument("--noctalia-colors-file", default=str(DEFAULT_NOCTALIA_COLORS_FILE), help="Noctalia colors.json used for preview colors")
+    parser.add_argument("--no-redact", action="store_true", help="Skip redaction of receiver serial/MAC/USB path; default redacts for shareable screenshots")
     args = parser.parse_args()
 
     runner = _qmltestrunner()
@@ -1034,6 +1057,8 @@ def main() -> int:
     )
 
     payload, source = _load_payload(args.service_url)
+    if not args.no_redact:
+        payload = _redact_payload(payload)
     print(f"Using payload source: {source}")
     print(f"Using Noctalia theme source: {theme_source}")
 
