@@ -2,6 +2,22 @@
 
 Local Noctalia bar widget and panel for the Hollyland wireless receiver.
 
+![Hollyland bar widget](docs/screenshots/hollyland-bar.png)
+
+![Hollyland panel](docs/screenshots/hollyland-panel.png)
+
+## Screenshots
+
+Regenerate the checked-in screenshots with:
+
+```bash
+python3 scripts/render_widget_screenshots.py
+```
+
+This requires the local service running on `127.0.0.1:8791` and Qt 6
+`qmltestrunner` at `/usr/lib/qt6/bin/qmltestrunner`, or a `QML_TESTRUNNER`
+environment variable pointing to it.
+
 The plugin talks to a tiny local HTTP service in `service/hollyland-widget-service`. That service
 imports `~/agentic/hollyland/hollyland_api.py` directly and uses the same code path as the CLI,
 rather than spawning `hollyland_cli.py` as a subprocess. HTTP is still the simpler boundary for the
