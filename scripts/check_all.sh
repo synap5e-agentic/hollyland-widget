@@ -15,6 +15,7 @@ cd "$ROOT_DIR"
 run_step "Compile Python scripts" python3 -m py_compile scripts/*.py service/hollyland-widget-service
 run_step "Parse installer" bash -n install.sh
 run_step "Validate plugin manifest" python3 scripts/validate_plugin.py
+run_step "Run Python tests" uv run --quiet pytest tests/python/ -q
 run_step "Lint QML" python3 scripts/lint_qml.py
 run_step "Dry-run installer" ./install.sh --dry-run
 
