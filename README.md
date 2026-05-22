@@ -6,18 +6,6 @@ Local Noctalia bar widget and panel for the Hollyland wireless receiver.
 
 ![Hollyland panel](docs/screenshots/hollyland-panel.png)
 
-## Screenshots
-
-Regenerate the checked-in screenshots with:
-
-```bash
-python3 scripts/render_widget_screenshots.py
-```
-
-This requires the local service running on `127.0.0.1:8791` and Qt 6
-`qmltestrunner` at `/usr/lib/qt6/bin/qmltestrunner`, or a `QML_TESTRUNNER`
-environment variable pointing to it.
-
 The plugin talks to a tiny local HTTP service in `service/hollyland-widget-service`. That service
 uses the in-tree Hollyland API directly. HTTP is still the simpler boundary for the QML side because
 the widget is request/poll oriented rather than stream oriented.
@@ -113,3 +101,14 @@ QML linting expects a configured import shim. Set it up once per clone:
 ```bash
 python3 scripts/setup_noctalia_qml_imports.py --checkout /etc/xdg/quickshell/noctalia-shell
 ```
+
+## Regenerating Screenshots
+
+```bash
+python3 scripts/render_widget_screenshots.py
+```
+
+Requires the local service running on `127.0.0.1:8791` and Qt 6 `qmltestrunner` at
+`/usr/lib/qt6/bin/qmltestrunner` (or `QML_TESTRUNNER` pointing at one). Receiver
+identifiers in the panel are redacted by default; pass `--no-redact` for an
+authentic local render.
