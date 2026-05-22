@@ -3,6 +3,9 @@ name = "hollyland-widget"
 version = "0.0.0"
 description = "Noctalia plugin and local service for the Hollyland wireless receiver."
 requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]
