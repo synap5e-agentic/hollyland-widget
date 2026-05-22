@@ -155,11 +155,31 @@ while IFS= read -r -d '' dir; do
   run mkdir -p "$TARGET_DIR/$rel"
 done < <(find "$PLUGIN_ROOT" -mindepth 1 -type d -print0 | sort -z)
 
+declare -A EXPECTED
 while IFS= read -r -d '' path; do
   rel="${path#$PLUGIN_ROOT/}"
+  EXPECTED["$rel"]=1
   run mkdir -p "$(dirname "$TARGET_DIR/$rel")"
   run ln -sfn "$path" "$TARGET_DIR/$rel"
 done < <(find "$PLUGIN_ROOT" -mindepth 1 \( -type f -o -type l \) -print0 | sort -z)
+
+# Prune managed symlinks under TARGET_DIR that no longer have a source.
+# "Managed" = symlink pointing into PLUGIN_ROOT. We refuse to touch anything else,
+# so user-created files or links to other locations survive untouched.
+if [ -d "$TARGET_DIR" ]; then
+  while IFS= read -r -d '' link; do
+    rel="${link#$TARGET_DIR/}"
+    [ -n "${EXPECTED[$rel]:-}" ] && continue
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+      "$PLUGIN_ROOT"/*) run rm -f "$link" ;;
+    esac
+  done < <(find "$TARGET_DIR" -mindepth 1 -type l -print0)
+  # Remove empty directories left behind by the prune.
+  while IFS= read -r -d '' dir; do
+    run rmdir "$dir" 2>/dev/null || true
+  done < <(find "$TARGET_DIR" -mindepth 1 -depth -type d -empty -print0)
+fi
 
 register_plugin
 
