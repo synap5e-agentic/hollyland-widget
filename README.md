@@ -1,17 +1,12 @@
 # Hollyland Noctalia Widget
 
-A [Noctalia](https://github.com/noctalia) plugin that puts your Hollyland wireless receiver in the
-status bar. A compact bar widget shows live transmitter state at a glance; clicking it opens a full
-panel with receiver details, per-transmitter status, and controls for the most common audio settings.
+[Noctalia](https://github.com/noctalia) plugin for the Hollyland wireless receiver. A bar widget shows live transmitter state; clicking it opens a panel with receiver details, per-transmitter status, and audio controls.
 
 ![Hollyland bar widget](docs/screenshots/hollyland-bar.png)
 
 ![Hollyland panel](docs/screenshots/hollyland-panel.png)
 
-The plugin works by polling a small local HTTP service (`service/hollyland-widget-service`) that
-speaks directly to the Hollyland API over USB. To use the plugin you run that service once (or keep
-it running as a user systemd unit), install the plugin into Noctalia, and the bar widget appears
-automatically when a receiver is detected.
+The plugin polls a local HTTP service (`service/hollyland-widget-service`) that talks to the Hollyland API over USB. Run the service, install the plugin, and the widget appears when a receiver is connected.
 
 ## What It Shows
 
@@ -19,8 +14,7 @@ automatically when a receiver is detected.
 - RX version, serial, MAC, USB path
 - transmitter online/offline state, battery, mute
 - current audio settings from `summary`
-- common write actions: noise, performance, light, identify, TX mute, voice mode, signal mode,
-  EQ, shutdown time, and voice level
+- common write actions: noise, performance, light, identify, TX mute, voice mode, signal mode, EQ, shutdown time, and voice level
 
 ## Run The Service
 
@@ -60,15 +54,13 @@ python3 service/hollyland_api.py summary
 
 ## Install The Plugin
 
-Install the QML into `~/.config/noctalia/plugins/hollyland/` and register it in
-`~/.config/noctalia/plugins.json`:
+Install the QML into `~/.config/noctalia/plugins/hollyland/` and register it in `~/.config/noctalia/plugins.json`:
 
 ```bash
 ./install.sh
 ```
 
-Use `./install.sh --restart` to restart Noctalia after install, or `./install.sh --dry-run` to
-inspect what would happen.
+Use `./install.sh --restart` to restart Noctalia after install, or `./install.sh --dry-run` to preview.
 
 ## Checks
 
@@ -98,7 +90,4 @@ python3 scripts/setup_noctalia_qml_imports.py --checkout /etc/xdg/quickshell/noc
 python3 scripts/render_widget_screenshots.py
 ```
 
-Requires the local service running on `127.0.0.1:8791` and Qt 6 `qmltestrunner` at
-`/usr/lib/qt6/bin/qmltestrunner` (or `QML_TESTRUNNER` pointing at one). Receiver
-identifiers in the panel are redacted by default; pass `--no-redact` for an
-authentic local render.
+Requires the local service running on `127.0.0.1:8791` and Qt 6 `qmltestrunner` at `/usr/lib/qt6/bin/qmltestrunner` (or `QML_TESTRUNNER` pointing at one). Receiver identifiers are redacted by default; pass `--no-redact` for an unredacted render.
