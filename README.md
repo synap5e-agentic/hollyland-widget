@@ -1,14 +1,12 @@
 # Hollyland Noctalia Widget
 
-Local Noctalia bar widget and panel for the Hollyland wireless receiver.
+[Noctalia](https://github.com/noctalia) plugin for the Hollyland wireless receiver. A bar widget shows live transmitter state; clicking it opens a panel with receiver details, per-transmitter status, and audio controls.
 
 ![Hollyland bar widget](docs/screenshots/hollyland-bar.png)
 
 ![Hollyland panel](docs/screenshots/hollyland-panel.png)
 
-The plugin talks to a tiny local HTTP service in `service/hollyland-widget-service`. That service
-uses the in-tree Hollyland API directly. HTTP is still the simpler boundary for the QML side because
-the widget is request/poll oriented rather than stream oriented.
+The plugin polls a local HTTP service (`service/hollyland-widget-service`) that talks to the Hollyland API over USB. Run the service, install the plugin, and the widget appears when a receiver is connected.
 
 ## What It Shows
 
@@ -16,21 +14,7 @@ the widget is request/poll oriented rather than stream oriented.
 - RX version, serial, MAC, USB path
 - transmitter online/offline state, battery, mute
 - current audio settings from `summary`
-- common write actions: noise, performance, light, identify, TX mute, voice mode, signal mode,
-  EQ, shutdown time, and voice level
-
-## Layout
-
-| Path | Purpose |
-|---|---|
-| `plugin/manifest.json` | Noctalia plugin metadata and entry points |
-| `plugin/Main.qml` | Shared plugin state, HTTP polling, action dispatch |
-| `plugin/BarWidget.qml` | Compact bar surface |
-| `plugin/Panel.qml` | Expanded controls and live state |
-| `service/hollyland-widget-service` | Local HTTP wrapper around the Hollyland Python API |
-| `systemd/hollyland-widget.service` | Optional user service unit |
-| `scripts/check_all.sh` | Canonical local verification gate |
-| `install.sh` | Symlink the plugin tree into Noctalia and register it |
+- common write actions: noise, performance, light, identify, TX mute, voice mode, signal mode, EQ, shutdown time, and voice level
 
 ## Run The Service
 
@@ -70,15 +54,13 @@ python3 service/hollyland_api.py summary
 
 ## Install The Plugin
 
-Install the QML into `~/.config/noctalia/plugins/hollyland/` and register it in
-`~/.config/noctalia/plugins.json`:
+Install the QML into `~/.config/noctalia/plugins/hollyland/` and register it in `~/.config/noctalia/plugins.json`:
 
 ```bash
 ./install.sh
 ```
 
-Use `./install.sh --restart` to restart Noctalia after install, or `./install.sh --dry-run` to
-inspect what would happen.
+Use `./install.sh --restart` to restart Noctalia after install, or `./install.sh --dry-run` to preview.
 
 ## Checks
 
@@ -108,7 +90,4 @@ python3 scripts/setup_noctalia_qml_imports.py --checkout /etc/xdg/quickshell/noc
 python3 scripts/render_widget_screenshots.py
 ```
 
-Requires the local service running on `127.0.0.1:8791` and Qt 6 `qmltestrunner` at
-`/usr/lib/qt6/bin/qmltestrunner` (or `QML_TESTRUNNER` pointing at one). Receiver
-identifiers in the panel are redacted by default; pass `--no-redact` for an
-authentic local render.
+Requires the local service running on `127.0.0.1:8791` and Qt 6 `qmltestrunner` at `/usr/lib/qt6/bin/qmltestrunner` (or `QML_TESTRUNNER` pointing at one). Receiver identifiers are redacted by default; pass `--no-redact` for an unredacted render.
